@@ -57,6 +57,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         console.print(f"Exact in-scope hosts, no subdomain enum: {', '.join(exact_hosts)}")
     counts: dict[str, int] = {}
     source_results: dict[str, set[str]] = {}
+    tool_log_dir = ensure_dir(out / "tool_logs")
 
     def normalize_host(value: str) -> str | None:
         if isinstance(value, bytes):
@@ -73,11 +74,20 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         if not command_exists(command[0]):
             return source, set(), f"{command[0]} missing"
         rc, stdout, stderr = run_command(command, timeout, dry_run=dry_run)
+        log_prefix = tool_log_dir / f"{safe_name(source + '_' + command_seed(command))}"
+        (log_prefix.with_suffix(".cmd.txt")).write_text(" ".join(command), encoding="utf-8")
+        (log_prefix.with_suffix(".stdout.txt")).write_text(stdout, encoding="utf-8", errors="replace")
+        (log_prefix.with_suffix(".stderr.txt")).write_text(stderr, encoding="utf-8", errors="replace")
         try:
             values = {host for line in stdout.splitlines() if (host := normalize_host(line))}
         except Exception as exc:
             return source, set(), f"parse failed: {exc}"
-        return source, values, None if rc == 0 else stderr.strip()[:200]
+        write_lines(log_prefix.with_suffix(".parsed.txt"), values)
+        if rc != 0:
+            return source, values, f"rc={rc}: {stderr.strip()[:300] or 'no stderr'}"
+        if not values and stderr.strip():
+            return source, values, f"0 parsed results; stderr: {stderr.strip()[:300]}"
+        return source, values, None
 
     tasks: list[tuple[str, list[str]]] = []
     for root in enum_roots:
@@ -104,6 +114,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
             if error:
                 errors.append(f"{name}: {error}")
     all_hosts = set().union(*source_results.values()) if source_results else set()
+    all_hosts.update(enum_roots)
     all_hosts.update(exact_hosts)
     counts = {source: len(values) for source, values in source_results.items()}
     buckets = {"in_scope": [], "out_of_scope": [], "ambiguous": []}
@@ -122,6 +133,8 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     write_json(out / "dedup_stats.json", overlap_stats(source_results))
     live = resolve_live_hosts(out, buckets["in_scope"], scope, threads, timeout, dry_run)
     print_counts(counts, len(all_hosts), buckets)
+    for error in errors:
+        console.print(f"[yellow]WARN:[/yellow] {error}")
     summarize(out, "subdomains", started, tool_versions={}, counts_per_source=counts, total_findings=len(all_hosts), errors=errors, live_hosts=len(live))
 
 
@@ -129,11 +142,15 @@ def crtsh(root: str, scope: ScopeEngine, ua: str) -> tuple[str, set[str], str | 
     import requests
 
     root = root.lstrip("*.").strip(".").lower()
-    url = f"https://crt.sh/?q=%.{root}&output=json"
     if root not in scope.wildcard_domains():
         return "crt.sh", set(), f"{root} is not a wildcard enumeration seed"
     try:
-        response = requests.get(url, headers={"User-Agent": ua}, timeout=20)
+        response = requests.get(
+            "https://crt.sh/",
+            params={"q": f"%.{root}", "output": "json"},
+            headers={"User-Agent": ua},
+            timeout=30,
+        )
         response.raise_for_status()
         rows = response.json()
         values: set[str] = set()
@@ -145,6 +162,19 @@ def crtsh(root: str, scope: ScopeEngine, ua: str) -> tuple[str, set[str], str | 
         return "crt.sh", values, None
     except Exception as exc:
         return "crt.sh", set(), str(exc)
+
+
+def safe_name(value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_.-]+", "_", value).strip("_") or "tool"
+
+
+def command_seed(command: list[str]) -> str:
+    for flag in ("-d", "-t", "--domain"):
+        if flag in command:
+            index = command.index(flag) + 1
+            if index < len(command):
+                return command[index]
+    return command[-1] if command else "unknown"
 
 
 def resolve_live_hosts(out: Path, hosts: list[str], scope: ScopeEngine, threads: int, timeout: int, dry_run: bool) -> list[dict[str, object]]:
