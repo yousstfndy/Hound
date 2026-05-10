@@ -62,27 +62,37 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     def normalize_host(value: str) -> str | None:
         if isinstance(value, bytes):
             value = value.decode("utf-8", errors="replace")
-        value = value.strip().lower().rstrip(".").replace("*.", "")
+        value = strip_ansi(value).strip().lower().rstrip(".").replace("*.", "")
         value = re.sub(r"^\w+://", "", value).split("/")[0].strip()
+        value = value.strip("[](){}<>,;:'\"`")
         if not value or "." not in value:
             return None
-        if not any(value.endswith("." + root) for root in enum_roots):
+        if not any(value == root or value.endswith("." + root) for root in enum_roots):
             return None
         return value
+
+    def extract_hosts(output: str) -> set[str]:
+        hosts: set[str] = set()
+        for root in enum_roots:
+            pattern = re.compile(rf"(?<![a-z0-9.-])(?:[a-z0-9_-]+\.)*{re.escape(root)}(?![a-z0-9.-])", re.I)
+            for match in pattern.finditer(output):
+                if host := normalize_host(match.group(0)):
+                    hosts.add(host)
+        return hosts
 
     def run_tool(source: str, command: list[str]) -> tuple[str, set[str], str | None]:
         if not command_exists(command[0]):
             return source, set(), f"{command[0]} missing"
         rc, stdout, stderr = run_command(command, timeout, dry_run=dry_run)
-        log_prefix = tool_log_dir / f"{safe_name(source + '_' + command_seed(command))}"
-        (log_prefix.with_suffix(".cmd.txt")).write_text(" ".join(command), encoding="utf-8")
-        (log_prefix.with_suffix(".stdout.txt")).write_text(stdout, encoding="utf-8", errors="replace")
-        (log_prefix.with_suffix(".stderr.txt")).write_text(stderr, encoding="utf-8", errors="replace")
+        log_prefix = tool_log_dir / safe_name(source + "_" + command_seed(command))
+        write_text_log(tool_log_dir / f"{log_prefix.name}.cmd.txt", " ".join(command))
+        write_text_log(tool_log_dir / f"{log_prefix.name}.stdout.txt", stdout)
+        write_text_log(tool_log_dir / f"{log_prefix.name}.stderr.txt", stderr)
         try:
-            values = {host for line in stdout.splitlines() if (host := normalize_host(line))}
+            values = extract_hosts(stdout)
         except Exception as exc:
             return source, set(), f"parse failed: {exc}"
-        write_lines(log_prefix.with_suffix(".parsed.txt"), values)
+        write_lines(tool_log_dir / f"{log_prefix.name}.parsed.txt", values)
         if rc != 0:
             return source, values, f"rc={rc}: {stderr.strip()[:300] or 'no stderr'}"
         if not values and stderr.strip():
@@ -144,28 +154,40 @@ def crtsh(root: str, scope: ScopeEngine, ua: str) -> tuple[str, set[str], str | 
     root = root.lstrip("*.").strip(".").lower()
     if root not in scope.wildcard_domains():
         return "crt.sh", set(), f"{root} is not a wildcard enumeration seed"
-    try:
-        response = requests.get(
-            "https://crt.sh/",
-            params={"q": f"%.{root}", "output": "json"},
-            headers={"User-Agent": ua},
-            timeout=30,
-        )
-        response.raise_for_status()
-        rows = response.json()
-        values: set[str] = set()
-        for row in rows:
-            for item in str(row.get("name_value", "")).splitlines():
-                item = item.strip().lower().replace("*.", "")
-                if item.endswith("." + root):
-                    values.add(item)
-        return "crt.sh", values, None
-    except Exception as exc:
-        return "crt.sh", set(), str(exc)
+    last_error = ""
+    for attempt in range(1, 4):
+        try:
+            response = requests.get(
+                "https://crt.sh/",
+                params={"q": f"%.{root}", "output": "json"},
+                headers={"User-Agent": ua},
+                timeout=45,
+            )
+            response.raise_for_status()
+            rows = response.json()
+            values: set[str] = set()
+            for row in rows:
+                for item in str(row.get("name_value", "")).splitlines():
+                    item = strip_ansi(item).strip().lower().replace("*.", "").rstrip(".")
+                    if item == root or item.endswith("." + root):
+                        values.add(item)
+            return "crt.sh", values, None
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(attempt * 2)
+    return "crt.sh", set(), last_error
 
 
 def safe_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", value).strip("_") or "tool"
+
+
+def strip_ansi(value: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", value)
+
+
+def write_text_log(path: Path, value: str) -> None:
+    path.write_text(value, encoding="utf-8", errors="replace")
 
 
 def command_seed(command: list[str]) -> str:

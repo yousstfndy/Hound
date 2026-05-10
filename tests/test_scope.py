@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from hound.scope import ScopeEngine
+from hound.modules import strip_ansi
 
 
 def test_scope_matching_and_exclusions(tmp_path: Path) -> None:
@@ -79,3 +80,7 @@ api.test.com
     assert engine.exact_hosts() == ["test.com", "api.test.com"]
     assert engine.is_in_scope("test.com") == (True, "matched test.com")
     assert engine.is_in_scope("www.test.com") == (False, "not in scope - ambiguous")
+
+
+def test_strip_ansi() -> None:
+    assert strip_ansi("\x1b[32mapi.test.com\x1b[0m") == "api.test.com"
