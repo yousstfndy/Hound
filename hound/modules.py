@@ -71,9 +71,9 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
             return None
         return value
 
-    def extract_hosts(output: str) -> set[str]:
+    def extract_hosts(output: str, roots: list[str]) -> set[str]:
         hosts: set[str] = set()
-        for root in enum_roots:
+        for root in roots:
             pattern = re.compile(rf"(?<![a-z0-9.-])(?:[a-z0-9_-]+\.)*{re.escape(root)}(?![a-z0-9.-])", re.I)
             for match in pattern.finditer(output):
                 if host := normalize_host(match.group(0)):
@@ -89,7 +89,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         write_text_log(tool_log_dir / f"{log_prefix.name}.stdout.txt", stdout)
         write_text_log(tool_log_dir / f"{log_prefix.name}.stderr.txt", stderr)
         try:
-            values = extract_hosts(stdout)
+            values = extract_hosts(stdout, [command_seed(command).lstrip("*.").strip(".").lower()])
         except Exception as exc:
             return source, set(), f"parse failed: {exc}"
         write_lines(tool_log_dir / f"{log_prefix.name}.parsed.txt", values)
