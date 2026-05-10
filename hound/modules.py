@@ -49,8 +49,12 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     started = time.time()
     target = scope.primary_target()
     out = module_dir(output_root, target, "subdomains")
-    roots = scope.tool_domains()
-    console.print(f"Enumerating bare domain seeds: {', '.join(roots)}")
+    enum_roots = scope.wildcard_domains()
+    exact_hosts = scope.exact_hosts()
+    if enum_roots:
+        console.print(f"Enumerating wildcard seeds: {', '.join(enum_roots)}")
+    if exact_hosts:
+        console.print(f"Exact in-scope hosts, no subdomain enum: {', '.join(exact_hosts)}")
     counts: dict[str, int] = {}
     source_results: dict[str, set[str]] = {}
 
@@ -61,7 +65,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         value = re.sub(r"^\w+://", "", value).split("/")[0].strip()
         if not value or "." not in value:
             return None
-        if not any(value.endswith("." + root) or value == root for root in roots):
+        if not any(value.endswith("." + root) for root in enum_roots):
             return None
         return value
 
@@ -76,7 +80,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         return source, values, None if rc == 0 else stderr.strip()[:200]
 
     tasks: list[tuple[str, list[str]]] = []
-    for root in roots:
+    for root in enum_roots:
         tasks.extend(
             [
                 ("subfinder", ["subfinder", "-d", root, "-silent", "-all", "-recursive"]),
@@ -89,7 +93,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     errors: list[str] = []
     with ThreadPoolExecutor(max_workers=5) as pool:
         futures = [pool.submit(run_tool, name, cmd) for name, cmd in tasks]
-        futures.extend(pool.submit(crtsh, root, scope, ua) for root in roots)
+        futures.extend(pool.submit(crtsh, root, scope, ua) for root in enum_roots)
         for future in as_completed(futures):
             try:
                 name, values, error = future.result()
@@ -100,6 +104,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
             if error:
                 errors.append(f"{name}: {error}")
     all_hosts = set().union(*source_results.values()) if source_results else set()
+    all_hosts.update(exact_hosts)
     counts = {source: len(values) for source, values in source_results.items()}
     buckets = {"in_scope": [], "out_of_scope": [], "ambiguous": []}
     for host in sorted(all_hosts):
@@ -125,8 +130,8 @@ def crtsh(root: str, scope: ScopeEngine, ua: str) -> tuple[str, set[str], str | 
 
     root = root.lstrip("*.").strip(".").lower()
     url = f"https://crt.sh/?q=%.{root}&output=json"
-    if root not in scope.tool_domains():
-        return "crt.sh", set(), f"{root} is not a configured tool seed"
+    if root not in scope.wildcard_domains():
+        return "crt.sh", set(), f"{root} is not a wildcard enumeration seed"
     try:
         response = requests.get(url, headers={"User-Agent": ua}, timeout=20)
         response.raise_for_status()

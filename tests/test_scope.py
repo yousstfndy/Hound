@@ -35,7 +35,7 @@ def test_protocol_scoped_url() -> None:
     assert entry.host == "target.com"
 
 
-def test_tool_domains_strip_wildcards(tmp_path: Path) -> None:
+def test_wildcard_domains_strip_wildcards(tmp_path: Path) -> None:
     scope_file = tmp_path / "scope.txt"
     scope_file.write_text(
         """
@@ -50,11 +50,32 @@ def test_tool_domains_strip_wildcards(tmp_path: Path) -> None:
     )
     engine = ScopeEngine(scope_file, output_root=tmp_path / "out")
 
-    assert engine.tool_domains() == [
+    assert engine.wildcard_domains() == [
         "tw.coupang.com",
         "tw.coupangcorp.com",
         "tw.coupangls.com",
     ]
+    assert engine.exact_hosts() == []
     assert engine.primary_target() == "tw.coupang.com"
     assert engine.is_in_scope("tw.coupang.com") == (False, "not in scope - ambiguous")
     assert engine.is_in_scope("api.tw.coupang.com") == (True, "matched *.tw.coupang.com")
+
+
+def test_bare_domains_are_exact_hosts_not_enum_seeds(tmp_path: Path) -> None:
+    scope_file = tmp_path / "scope.txt"
+    scope_file.write_text(
+        """
+[in_scope]
+test.com
+api.test.com
+
+[out_of_scope]
+""",
+        encoding="utf-8",
+    )
+    engine = ScopeEngine(scope_file, output_root=tmp_path / "out")
+
+    assert engine.wildcard_domains() == []
+    assert engine.exact_hosts() == ["test.com", "api.test.com"]
+    assert engine.is_in_scope("test.com") == (True, "matched test.com")
+    assert engine.is_in_scope("www.test.com") == (False, "not in scope - ambiguous")

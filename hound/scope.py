@@ -193,14 +193,19 @@ class ScopeEngine:
         return buckets
 
     def root_domains(self) -> list[str]:
-        return self.tool_domains()
+        roots: list[str] = []
+        for host in self.wildcard_domains() + self.exact_hosts():
+            if host not in roots:
+                roots.append(host)
+        return roots
 
-    def tool_domains(self) -> list[str]:
-        """Bare domains safe to pass to external recon tools.
+    def wildcard_domains(self) -> list[str]:
+        """Bare domains that should be expanded by subdomain recon tools.
 
         Scope wildcard entries like ``*.example.com`` intentionally do not match
         the bare domain during enforcement, but recon tools expect ``example.com``
-        as their input seed. Keep that conversion in one place.
+        as their input seed. Bare host entries are exact scope and are not
+        returned here.
         """
         roots: list[str] = []
         for entry in self.in_scope_entries:
@@ -208,11 +213,17 @@ class ScopeEngine:
                 host = entry.host.lstrip("*.").strip(".")
                 if host not in roots:
                     roots.append(host)
-            elif entry.kind in {"host", "url"} and entry.host:
-                host = entry.host.lstrip("*.").strip(".")
-                if host not in roots:
-                    roots.append(host)
         return roots
+
+    def exact_hosts(self) -> list[str]:
+        """In-scope hosts that should be tested exactly, not enumerated."""
+        hosts: list[str] = []
+        for entry in self.in_scope_entries:
+            if entry.kind in {"host", "url"} and entry.host:
+                host = entry.host.lstrip("*.").strip(".")
+                if host not in hosts:
+                    hosts.append(host)
+        return hosts
 
     def primary_target(self) -> str:
         for entry in self.in_scope_entries:
