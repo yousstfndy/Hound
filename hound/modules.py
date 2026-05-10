@@ -222,6 +222,9 @@ def headers(scope: ScopeEngine, output_root: Path, threads: int, timeout: int, u
     out = module_dir(output_root, target, "headers")
     live_path = output_root / target / "subdomains" / "live_hosts.json"
     hosts = json.loads(live_path.read_text(encoding="utf-8")) if live_path.exists() else []
+    if not hosts:
+        hosts = scope_seed_hosts(scope)
+        console.print(f"[yellow]No live_hosts.json entries found; using {len(hosts)} host(s) from scope.[/yellow]")
     paths = ["/", "/robots.txt", "/sitemap.xml", "/.well-known/security.txt", "/api", "/api/v1", "/api/v2", "/graphql", "/admin", "/health", "/status"]
     all_headers: dict[str, dict[str, dict[str, str]]] = defaultdict(dict)
     freq: Counter[str] = Counter()
@@ -254,6 +257,29 @@ def headers(scope: ScopeEngine, output_root: Path, threads: int, timeout: int, u
     write_lines(out / "headers_rare.txt", rare)
     write_lines(out / "headers_flagged.txt", flagged)
     summarize(out, "headers", started, total_findings=len(flagged), counts_per_source={"hosts": len(hosts)}, errors=[])
+
+
+def scope_seed_hosts(scope: ScopeEngine) -> list[dict[str, object]]:
+    hosts: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for entry in scope.in_scope_entries:
+        if entry.kind == "wildcard" or not entry.host:
+            continue
+        candidates: list[str]
+        if entry.kind == "url":
+            scheme = entry.scheme or "https"
+            path = entry.path or ""
+            candidates = [f"{scheme}://{entry.host}{path}"]
+        elif entry.kind == "host":
+            candidates = [f"https://{entry.host}", f"http://{entry.host}"]
+        else:
+            candidates = []
+        for url in candidates:
+            ok, _ = scope.is_in_scope(url)
+            if ok and url not in seen:
+                seen.add(url)
+                hosts.append({"url": url, "source": "scope"})
+    return hosts
 
 
 def flag_headers(headers_map: dict[str, str]) -> list[str]:

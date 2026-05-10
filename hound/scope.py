@@ -193,17 +193,24 @@ class ScopeEngine:
         return buckets
 
     def root_domains(self) -> list[str]:
-        roots: set[str] = set()
+        roots: list[str] = []
         for entry in self.in_scope_entries:
             if entry.kind == "wildcard" and entry.host:
-                roots.add(entry.host)
+                if entry.host not in roots:
+                    roots.append(entry.host)
             elif entry.kind in {"host", "url"} and entry.host:
-                roots.add(entry.host)
-        return sorted(roots)
+                if entry.host not in roots:
+                    roots.append(entry.host)
+        return roots
 
     def primary_target(self) -> str:
-        roots = self.root_domains()
-        return roots[0] if roots else "scope"
+        for entry in self.in_scope_entries:
+            if entry.kind == "wildcard" and entry.host:
+                return entry.host
+        for entry in self.in_scope_entries:
+            if entry.kind in {"host", "url"} and entry.host:
+                return entry.host
+        return "scope"
 
     def _target(self, value: str) -> dict[str, str | None]:
         value = value.strip().lower().rstrip("/")
