@@ -54,6 +54,8 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     source_results: dict[str, set[str]] = {}
 
     def normalize_host(value: str) -> str | None:
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
         value = value.strip().lower().rstrip(".").replace("*.", "")
         value = re.sub(r"^\w+://", "", value).split("/")[0].strip()
         if not value or "." not in value:
@@ -66,7 +68,10 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         if not command_exists(command[0]):
             return source, set(), f"{command[0]} missing"
         rc, stdout, stderr = run_command(command, timeout, dry_run=dry_run)
-        values = {host for line in stdout.splitlines() if (host := normalize_host(line))}
+        try:
+            values = {host for line in stdout.splitlines() if (host := normalize_host(line))}
+        except Exception as exc:
+            return source, set(), f"parse failed: {exc}"
         return source, values, None if rc == 0 else stderr.strip()[:200]
 
     tasks: list[tuple[str, list[str]]] = []
@@ -85,7 +90,11 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         futures = [pool.submit(run_tool, name, cmd) for name, cmd in tasks]
         futures.extend(pool.submit(crtsh, root, scope, ua) for root in roots)
         for future in as_completed(futures):
-            name, values, error = future.result()
+            try:
+                name, values, error = future.result()
+            except Exception as exc:
+                errors.append(f"collector crashed: {exc}")
+                continue
             source_results.setdefault(name, set()).update(values)
             if error:
                 errors.append(f"{name}: {error}")

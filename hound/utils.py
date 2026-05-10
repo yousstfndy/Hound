@@ -62,6 +62,14 @@ def command_exists(command: str) -> bool:
     return which(command) is not None
 
 
+def coerce_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 def run_command(command: list[str], timeout: int, dry_run: bool = False) -> tuple[int, str, str]:
     if dry_run:
         return 0, "DRY-RUN: " + " ".join(command), ""
@@ -73,9 +81,9 @@ def run_command(command: list[str], timeout: int, dry_run: bool = False) -> tupl
             timeout=timeout,
             check=False,
         )
-        return result.returncode, result.stdout, result.stderr
+        return result.returncode, coerce_text(result.stdout), coerce_text(result.stderr)
     except subprocess.TimeoutExpired as exc:
-        return 124, exc.stdout or "", exc.stderr or f"timeout after {timeout}s"
+        return 124, coerce_text(exc.stdout), coerce_text(exc.stderr) or f"timeout after {timeout}s"
     except OSError as exc:
         return 127, "", str(exc)
 
