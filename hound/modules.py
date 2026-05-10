@@ -83,7 +83,7 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     def run_tool(source: str, command: list[str]) -> tuple[str, set[str], str | None]:
         if not command_exists(command[0]):
             return source, set(), f"{command[0]} missing"
-        rc, stdout, stderr = run_command(command, timeout, dry_run=dry_run)
+        rc, stdout, stderr = run_command(command, command_timeout_seconds(source, timeout), dry_run=dry_run)
         log_prefix = tool_log_dir / safe_name(source + "_" + command_seed(command))
         write_text_log(tool_log_dir / f"{log_prefix.name}.cmd.txt", " ".join(command))
         write_text_log(tool_log_dir / f"{log_prefix.name}.stdout.txt", stdout)
@@ -95,16 +95,17 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
         write_lines(tool_log_dir / f"{log_prefix.name}.parsed.txt", values)
         if rc != 0:
             return source, values, f"rc={rc}: {stderr.strip()[:300] or 'no stderr'}"
-        if not values and stderr.strip():
+        if not values and stderr.strip() and not benign_stderr(source, stderr):
             return source, values, f"0 parsed results; stderr: {stderr.strip()[:300]}"
         return source, values, None
 
     tasks: list[tuple[str, list[str]]] = []
     for root in enum_roots:
+        amass_minutes = max(1, timeout // 60)
         tasks.extend(
             [
                 ("subfinder", ["subfinder", "-d", root, "-silent", "-all", "-recursive"]),
-                ("amass", ["amass", "enum", "-passive", "-d", root, "-timeout", "10"]),
+                ("amass", ["amass", "enum", "-passive", "-d", root, "-timeout", str(amass_minutes)]),
                 ("assetfinder", ["assetfinder", "--subs-only", root]),
                 ("findomain", ["findomain", "-t", root, "--quiet"]),
             ]
@@ -180,6 +181,17 @@ def crtsh(root: str, scope: ScopeEngine, ua: str) -> tuple[str, set[str], str | 
 
 def safe_name(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", value).strip("_") or "tool"
+
+
+def command_timeout_seconds(source: str, timeout: int) -> int:
+    if source == "amass":
+        return timeout + 30
+    return timeout
+
+
+def benign_stderr(source: str, stderr: str) -> bool:
+    text = stderr.strip().lower()
+    return source == "amass" and text == "the enumeration has finished"
 
 
 def strip_ansi(value: str) -> str:
