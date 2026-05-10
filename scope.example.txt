@@ -1,0 +1,12 @@
+[in_scope]
+*.target.com
+target.com
+api.target.com
+93.184.216.0/24
+https://target.com/app
+
+[out_of_scope]
+admin.target.com
+*.dev.target.com
+target.com/logout
+target.com/delete-account
