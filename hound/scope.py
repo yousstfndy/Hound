@@ -270,4 +270,4 @@ class ScopeEngine:
 
     @staticmethod
     def _host_matches_wildcard(host: str, base: str) -> bool:
-        return host.endswith("." + base) and host != base
+        return host == base or host.endswith("." + base)

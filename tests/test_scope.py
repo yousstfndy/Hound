@@ -57,7 +57,7 @@ def test_wildcard_domains_strip_wildcards(tmp_path: Path) -> None:
     ]
     assert engine.exact_hosts() == []
     assert engine.primary_target() == "tw.coupang.com"
-    assert engine.is_in_scope("tw.coupang.com") == (False, "not in scope - ambiguous")
+    assert engine.is_in_scope("tw.coupang.com") == (True, "matched *.tw.coupang.com")
     assert engine.is_in_scope("api.tw.coupang.com") == (True, "matched *.tw.coupang.com")
 
 
