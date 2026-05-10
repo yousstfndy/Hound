@@ -193,23 +193,34 @@ class ScopeEngine:
         return buckets
 
     def root_domains(self) -> list[str]:
+        return self.tool_domains()
+
+    def tool_domains(self) -> list[str]:
+        """Bare domains safe to pass to external recon tools.
+
+        Scope wildcard entries like ``*.example.com`` intentionally do not match
+        the bare domain during enforcement, but recon tools expect ``example.com``
+        as their input seed. Keep that conversion in one place.
+        """
         roots: list[str] = []
         for entry in self.in_scope_entries:
             if entry.kind == "wildcard" and entry.host:
-                if entry.host not in roots:
-                    roots.append(entry.host)
+                host = entry.host.lstrip("*.").strip(".")
+                if host not in roots:
+                    roots.append(host)
             elif entry.kind in {"host", "url"} and entry.host:
-                if entry.host not in roots:
-                    roots.append(entry.host)
+                host = entry.host.lstrip("*.").strip(".")
+                if host not in roots:
+                    roots.append(host)
         return roots
 
     def primary_target(self) -> str:
         for entry in self.in_scope_entries:
             if entry.kind == "wildcard" and entry.host:
-                return entry.host
+                return entry.host.lstrip("*.").strip(".")
         for entry in self.in_scope_entries:
             if entry.kind in {"host", "url"} and entry.host:
-                return entry.host
+                return entry.host.lstrip("*.").strip(".")
         return "scope"
 
     def _target(self, value: str) -> dict[str, str | None]:

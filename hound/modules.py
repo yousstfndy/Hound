@@ -49,7 +49,8 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
     started = time.time()
     target = scope.primary_target()
     out = module_dir(output_root, target, "subdomains")
-    roots = scope.root_domains()
+    roots = scope.tool_domains()
+    console.print(f"Enumerating bare domain seeds: {', '.join(roots)}")
     counts: dict[str, int] = {}
     source_results: dict[str, set[str]] = {}
 
@@ -122,9 +123,10 @@ def subdomains(scope: ScopeEngine, output_root: Path, threads: int, timeout: int
 def crtsh(root: str, scope: ScopeEngine, ua: str) -> tuple[str, set[str], str | None]:
     import requests
 
+    root = root.lstrip("*.").strip(".").lower()
     url = f"https://crt.sh/?q=%.{root}&output=json"
-    if not scope.is_in_scope(root)[0]:
-        return "crt.sh", set(), f"{root} not in scope"
+    if root not in scope.tool_domains():
+        return "crt.sh", set(), f"{root} is not a configured tool seed"
     try:
         response = requests.get(url, headers={"User-Agent": ua}, timeout=20)
         response.raise_for_status()
@@ -308,22 +310,23 @@ def flag_headers(headers_map: dict[str, str]) -> list[str]:
 
 def js_mine(scope: ScopeEngine, output_root: Path, threads: int, timeout: int, dry_run: bool, ua: str, rate: float) -> None:
     started = time.time()
-    target = scope.primary_target()
+    target = scope.primary_target().lstrip("*.").strip(".")
     out = module_dir(output_root, target, "js_mine")
     js_dir = ensure_dir(out / "js_files")
     source_results: dict[str, set[str]] = {}
+    collector_target = target.lstrip("*.").strip(".")
     collectors = [
-        ("gospider", ["gospider", "-s", f"https://{target}", "-d", "3", "-t", "10", "--js", "-q"]),
+        ("gospider", ["gospider", "-s", f"https://{collector_target}", "-d", "3", "-t", "10", "--js", "-q"]),
         ("hakrawler", ["hakrawler", "-js", "-d", "3", "-t", "10"]),
-        ("gau", ["gau", target, "--blacklist", "png,jpg,gif,css,woff,ttf,svg"]),
-        ("waybackurls", ["waybackurls", target]),
+        ("gau", ["gau", collector_target, "--blacklist", "png,jpg,gif,css,woff,ttf,svg"]),
+        ("waybackurls", ["waybackurls", collector_target]),
     ]
 
     def collect(name: str, command: list[str]) -> tuple[str, set[str], str | None]:
         if not command_exists(command[0]):
             return name, set(), f"{command[0]} missing"
         if name == "hakrawler":
-            proc = subprocess.run(command, input=f"https://{target}\n", capture_output=True, text=True, timeout=timeout, check=False)
+            proc = subprocess.run(command, input=f"https://{collector_target}\n", capture_output=True, text=True, timeout=timeout, check=False)
             stdout = proc.stdout
             err = None if proc.returncode == 0 else proc.stderr[:200]
         else:
